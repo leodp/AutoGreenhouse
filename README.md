@@ -22,5 +22,12 @@ Control (Via 220V Relais):
   - Reduce humidity (open window or switch on fan)
   - Watering 
   - Blackout (limit daylight duration for plants which need to be forced)
+  
+Update:
+  Added read-in of values from Thingspeak channel description to update controls' trigger values. 
+  Format is: Variable[space]Value[space]Variable2[space]...ValueN[space][semicolon]
+  Sequence of variables cannot be altered from following example:
+  "HeatOn 0.5 HeatOff 3 LenDay 41400000 LenBO 10800000 OHeatOn 35 OHeatOff 28 H2Oon 15 H2Ooff 30 RHOn 90 RHOff 60 RHminT 5 DewMax 95 ;"
+  
 
 More explanations coming.
