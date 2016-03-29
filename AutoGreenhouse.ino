@@ -53,7 +53,7 @@ File myFile;
 #define IPWiFiCARD "192."                                     // if it is  connected, IP=192.168... (you may need to edit here, check your AP settings)
 #define SERIALspeed 115200                                    // Speed for ESP8266, in different firmwares may be different
 char cmdBuf[150] = {0};             // for the AT command
-char cmd2Buf[42] = {0};             // for the AT command
+char cmd2Buf[50] = {0};             // for the AT command
 char date_string[29] = {0};     
 bool ConnOK = false;
 bool WiFiMOD = true;
