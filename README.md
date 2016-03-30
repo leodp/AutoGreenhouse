@@ -29,7 +29,16 @@ Remote updating:
   - Sequence of variables cannot be altered from following example:
   ";HeatOn 0.5 HeatOff 3 LenDay 41400000 LenBO 10800000 OHeatOn 35 OHeatOff 28 H2Oon 15 H2Ooff 30 RHOn 90 RHOff 60 RHminT 5 DewMax 95 ;"
   
+Libraries to download:
+- BMP180 pressure sensor lib, from: https://github.com/sparkfun/BMP180_Breakout_Arduino_Library/archive/master.zip 
+          https://learn.sparkfun.com/tutorials/bmp180-barometric-pressure-sensor-hookup-/installing-the-arduino-library
+- LiquidCrystal_I2C (V1.2 is ok) from fmalpartida: https://bitbucket.org/fmalpartida/new-liquidcrystal/downloads
+-         http://arduino-info.wikispaces.com/LCD-Blue-I2C
+- HTU21D, from:   https://github.com/sparkfun/SparkFun_HTU21D_Breakout_Arduino_Library/archive/master.zip
+          https://learn.sparkfun.com/tutorials/htu21d-humidity-sensor-hookup-guide
 
-More explanations coming.
+Warning/Debug needed: 
+- Only ~290bytes free for local variables, MAY BE UNSTABLE (even if most variables are preassigned and should not fragment). 96% flash used.
+- Linux not compiling (libraries conflict?)
 
-Warning/Debug needed: libraries version requirements unclear. Linux compile not working (libraries conflict?)
+More explanations coming
