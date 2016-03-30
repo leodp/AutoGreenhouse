@@ -31,3 +31,5 @@ Remote updating:
   
 
 More explanations coming.
+
+Warning/Debug needed: libraries version requirements unclear. Linux compile not working (libraries conflict?)
