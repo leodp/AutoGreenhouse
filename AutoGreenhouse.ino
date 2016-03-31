@@ -6,7 +6,7 @@
 // Digit 09 -> I2C multiplex switch, for multiplexing the 2 T-RH sensors
 // Digit 10 11 12 13 -> CS SCK MOSI MISO (SD card)
 
-// Analog A4 A5 -> SCL SDA (LCD I2C + 2x T-HR sensors)
+// Analog A4 A5 -> SCL SDA (LCD I2C + 2x T-RH sensors)
 
 // GND, 3.3V   T-HR sensors
 // GND, 5.0V   LCD, SD, 2xRelais (220V)
@@ -42,6 +42,7 @@ HTU21D myTemp;                             //Create an instance of the object  T
 #define file_name "GH1.txt" // log file name
 File myFile;
 
+
 // ESP8266 - WiFi card
 #define SSID "your_ssid"                                      // edit with your wifi ssid here
 #define PASS "your_pwd"                                       // edit with your wifi key here
@@ -61,15 +62,16 @@ bool WiFiMOD = true;
 //define I/O lines & connections
 #define chipSelectSD  10     // SD card CS
 #define relay_I2cMultiplex 9 // Switch to enable a second T/RH sensor on I2C
-#define digCh_in 2           // channel for the "input switch" (not used, was for debug purposes)
+//#define digCh_in 2           // channel for the "input switch" (not used, was for debug purposes)
 
 // Digital lines for controls
 #define relay_Heat 8
-#define relay_BOut 7
-#define relay_Overheat 6
-#define relay_Water 5
-#define relay_LowRH 4
-#define relay_WiFiReset 3 // Hard reset necessary for the dumb ESP8266
+#define relay_Water 7
+#define relay_Overheat 6     // possible PWM on motor
+#define relay_BOut 5         // possible PWM on motor
+#define relay_WiFiReset 4    // Hard reset necessary for the dumb ESP8266
+#define relay_LowRH 3        // possible PWM on motor
+#define relay_Humidify 2 
 
 // Analog lines for sensing
 #define anaCh_dew 0          // channel to sense dew point
@@ -96,9 +98,11 @@ double timeDiffMeas = 0;        // variable to measure the time passed on the Bl
 int dayStateMachine = 0;        // for controlling blackout opening/closing routine
 bool BOUTbool = LOW;            // some booleans for recording the status of the controls
 bool heatbool = LOW;            // ...
+bool humidifybool = LOW;        // ...
 bool overheatbool = LOW;
 bool waterbool = LOW;
 bool lowRHbool = LOW;
+
 
 
 // VALUES TO SET AUTOMATIC CONTROLS ------------------------  EDIT HERE TO SUIT YOUR NEEDS ----------------------
@@ -106,12 +110,17 @@ bool lowRHbool = LOW;
 float HeatOn = 0.5;                        // Too low Temp: start heating. Need float precision on temp warning close to 0°C
 float HeatOff = 3;                         // Safe Temp, stop heating
 
+float HumidifyOn = 20;                     // Too low Temp: start heating. Need float precision on temp warning close to 0°C
+float HumidifyOff = 30;                    // Safe Temp, stop heating
+
 int long LenDay  = 11.50 * 60 * 60 * 1000; // Time of illumination/allowed daylength (in ms, first value indicate the effective hours)
 int long LenBO =    3 * 60 * 60 * 1000;    // Time to keep Blackout. During the night it can be opened for air exchange. Increase according to your needs
 int DayJitt  = 5;                          // Number of day-begin detections. (To avoid jitter, due for example to short light pulses, i.e. lights on for 1min during night visits)
+unsigned int BOUTPWM = 255;                // PWM controls for the motors. Set to 255 for always on/always off
 
 int OHeatOn = 35;                          // Open window in case of overheating: max acceptable temp before plants suffer
 int OHeatOff = 27;                         // Close window to keep this minimum Temp safeguarded
+unsigned int overheatPWM = 128;            // PWM controls for the motors. Set to 255 for always on/always off
 
 int H2Oon = 15;                            // Turn on auto watering (value from soil humidity sensor)
 int H2Ooff = 30;                           // Turn off auto watering
@@ -120,6 +129,7 @@ int RHOn    = 90;                          // Max humidity allowed: take precaut
 int RHOff   = 60;                          // Safe humidity level (reduced molds/mildew risk): switch off ventilation.
 int RHminT  = 5;                           // If temperature falls below this value then stop ventilation to avoid undercooling, even if RH is high
 int DewMax = 90;                           // If the dew sensor is indicating condensation, you may want to start ventilation. Increase above 100 to disable
+unsigned int lowRHPWM = 128;               // PWM controls for the motors. Set to 255 for always on/always off
 
 
 
@@ -131,6 +141,7 @@ void setup()
   pinMode(relay_WiFiReset, OUTPUT);
   pinMode(relay_I2cMultiplex, OUTPUT);
   pinMode(chipSelectSD, OUTPUT);
+  pinMode(relay_Humidify, OUTPUT);
   pinMode(relay_Heat, OUTPUT);
   pinMode(relay_BOut, OUTPUT);
   pinMode(relay_Overheat, OUTPUT);
@@ -140,19 +151,19 @@ void setup()
   pinMode(anaCh_rain, INPUT);
   pinMode(anaCh_dew, INPUT);
   pinMode(anaCh_soil, INPUT);
-  pinMode(digCh_in, OUTPUT);              // To use external switch without external pull-up resistance (there's already an internal one)
+  //pinMode(digCh_in, OUTPUT);            // Not used. Was for testing interrupts. To use external switch without external pull-up resistance (there's already an internal one)
   
-
   digitalWrite(relay_I2cMultiplex, LOW);  // Init temp sensor # switch
   digitalWrite(chipSelectSD, HIGH);       // SD Card ACTIVE
+  digitalWrite(relay_Humidify, LOW);      // LOW=0 = not operative = do not humidify the greenhouse (control for tropical environment)
   digitalWrite(relay_Heat, LOW);          // LOW=0 = not operative = do not heat the greenhouse
   digitalWrite(relay_BOut, LOW);          // LOW=0 = not operative = OPEN WINDOW
   digitalWrite(relay_Overheat, LOW);      // LOW=0 = not operative = no blackout
   digitalWrite(relay_Water, LOW);         // LOW=0 = not operative = no watering
   digitalWrite(relay_LowRH, LOW);         // LOW=0 = not operative = no dehumidify
-  digitalWrite(digCh_in, HIGH);           // To use the internal pull-up resistance. External switch does not need it
+  //digitalWrite(digCh_in, HIGH);         // Not used anymore. To use the internal pull-up resistance. External switch does not need it
   
-  attachInterrupt(digitalPinToInterrupt(digCh_in), finito, RISING);  // function to stop recording. (Simple programming exercise, not needed)
+  //attachInterrupt(digitalPinToInterrupt(digCh_in), finito, RISING);  // Not used anymore. function to stop recording. (Simple programming exercise, not needed)
 
 
   PRESSURE.begin();
@@ -300,7 +311,15 @@ void loop()
   { overheatbool = HIGH;}
   if (Ti < OHeatOff)
   { overheatbool = LOW; }
-  digitalWrite(relay_Overheat, overheatbool);
+  analogWrite(relay_Overheat, overheatbool*overheatPWM);
+
+  // Humidification Control--------------------------------------
+  if (RHi > HumidifyOn)              // Humidifying indications On and Off have different values, to allow for hysteresis
+  { humidifybool = HIGH;}
+  if (RHi < HumidifyOff)
+  { humidifybool = LOW; }
+  digitalWrite(relay_Humidify, humidifybool);
+
 
   // Watering Control--------------------------------------
   if (soil < H2Oon)                 // Watering On and Off have different values, to allow for hysteresis
@@ -319,7 +338,8 @@ void loop()
   { lowRHbool = HIGH; }// Switching on can decrease internal RH
   if (RHi < RHOff || RHi / Ti < RHo / To || To < RHminT)                    // If RH inside is low enough or the external absolute humidity is higher =>turn off
   { lowRHbool = LOW;  }
-  digitalWrite(relay_LowRH, lowRHbool);
+  analogWrite(relay_LowRH, lowRHbool*lowRHPWM);
+
 
   // Black-out control, to force plants via light (growing/flowering/fruiting/dormiency/...)--------------------------------------
   if (sun && !dayStateMachine) {
@@ -331,7 +351,7 @@ void loop()
   }
   if ((time_elapsed - timeDiffMeas) > LenDay && dayStateMachine == 1)         // If we have had enough day turn on the blackout system. May be connected also to a small air-circulation fan, too keep low T & RH
   { BOUTbool = HIGH;
-    digitalWrite(relay_BOut, BOUTbool);
+    analogWrite(relay_BOut, BOUTbool*BOUTPWM);
     dayStateMachine = 2;
   }
   if ((time_elapsed - timeDiffMeas) > LenBO + LenDay && dayStateMachine == 2) // After a while open again the blackout tent, for easing ventilation (it should be already night outside)
@@ -649,6 +669,6 @@ void delayFnct()  //just to save memory
   delay(120);
 }
 
-void finito()  //Interrupt function  stops main loop if stop button pressed
-  {  exit;  }                                
+//void finito()  //Not used anymore. Interrupt function  stops main loop if stop button pressed
+//  {  exit;  }                                
 
