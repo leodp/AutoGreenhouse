@@ -39,7 +39,7 @@ HTU21D myTemp;                             //Create an instance of the object  T
 
 // SD Card                  // http://arduino-info.wikispaces.com/SD-Cards    https://learn.adafruit.com/adafruit-micro-sd-breakout-board-card-tutorial  http://garagelab.com/profiles/blogs/tutorial-how-to-use-sd-card-with-arduino
 #include <SD.h>             // SD card attached to SPI bus as follows:  MOSI - pin 11   MISO - pin 12    CLK - pin 13   CS - pin 10
-#define file_name "GH1.txt" // log file name
+#define file_name "GH0.txt" // log file name
 File myFile;
 
 
@@ -53,10 +53,11 @@ File myFile;
 #define DST_IP "184.106.153.149"                              // Thingspeak API IP address
 #define IPWiFiCARD "192."                                     // if it is  connected, IP=192.168... (you may need to edit here, check your AP settings)
 #define SERIALspeed 115200                                    // Speed for ESP8266, in different firmwares may be different
-char cmdBuf[140] = {0};                                       // for the AT command. Check that Thingspeak description length is shorted than this buffer len
-char cmd2Buf[49] = {0};                                       // for the AT command
+char cmdBuf[145] = {0};                                       // for the AT command. Check that Thingspeak description length is shorted than this buffer len
+char cmd2Buf[20] = {0};                                       // for the AT command
 bool ConnOK = false;
 //bool WiFiMOD = true;
+//String  strtmp;
 
 //define I/O lines & connections
 #define chipSelectSD  10     // SD card CS
@@ -79,7 +80,7 @@ bool ConnOK = false;
 #define anaCh_rain 3         // channel to sense rain
 
 // General variables
-char buf[8] = "";                       // temporary buffer
+char buf[9] = "";                       // temporary buffer
 int i, j, k;                             // generic index
 unsigned long time_begin, time_elapsed;  // time count
 float Ti, To;                            // temperatures: inside, outside
@@ -101,30 +102,28 @@ byte CtrlByte  = B00000000;       // http://playground.arduino.cc/Code/BitMath s
 
 // VALUES TO SET AUTOMATIC CONTROLS ------------------------  EDIT HERE TO SUIT YOUR NEEDS ----------------------
 
-float HeatOn = 0.5;                        // Too low Temp: start heating. Need float precision on temp warning close to 0°C
-float HeatOff = 3;                         // Safe Temp, stop heating
-
-float HumidifyOn = 20;                     // Too low Temp: start heating. Need float precision on temp warning close to 0°C
-float HumidifyOff = 30;                    // Safe Temp, stop heating
-
 int long LenDay  = 11.50 * 60 * 60 * 1000; // Time of illumination/allowed daylength (in ms, first value indicate the effective hours)
 int long LenBO =    3 * 60 * 60 * 1000;    // Time to keep Blackout. During the night it can be opened for air exchange. Increase according to your needs
 int DayJitt  = 5;                          // Number of day-begin detections. (To avoid jitter, due for example to short light pulses, i.e. lights on for 1min during night visits)
                                            // No PWM on BOut motor, as 1 and 0 control the two motor directions (open/close)
+float HtOn = 0.5;                        // Too low Temp: start heating. Need float precision on temp warning close to 0°C
+float HtOff = 3;                         // Safe Temp, stop heating
 
-int OHeatOn = 35;                          // Open window in case of overheating: max acceptable temp before plants suffer
-int OHeatOff = 27;                         // Close window to keep this minimum Temp safeguarded
+float OHtOn = 40;                          // Open window in case of overheating: max acceptable temp before plants suffer
+float OHtOff = 30;                         // Close window to keep this minimum Temp safeguarded
 unsigned int overheatPWM = 128;            // PWM controls for the motors. Set to 255 for always on/always off
 
 int H2Oon = 15;                            // Turn on auto watering (value from soil humidity sensor)
 int H2Ooff = 30;                           // Turn off auto watering
 
-int RHOn    = 90;                          // Max humidity allowed: take precautions to reduce humidity (open windows, ventilate with external air)
-int RHOff   = 60;                          // Safe humidity level (reduced molds/mildew risk): switch off ventilation.
-int RHminT  = 5;                           // If temperature falls below this value then stop ventilation to avoid undercooling, even if RH is high
-int DewMax = 90;                           // If the dew sensor is indicating condensation, you may want to start ventilation. Increase above 100 to disable
-unsigned int lowRHPWM = 128;               // PWM controls for the motors. Set to 255 for always on/always off
+int RHon = 15;                     // Too low Temp: start heating. Need float precision on temp warning close to 0°C
+int RHoff = 35;                    // Safe Temp, stop heating
 
+int ORHon    = 95;                          // Max humidity allowed: take precautions to reduce humidity (open windows, ventilate with external air)
+int ORHoff   = 75;                          // Safe humidity level (reduced molds/mildew risk): switch off ventilation.
+int ORHT  = 5;                           // If temperature falls below this value then stop ventilation to avoid undercooling, even if RH is high
+int DewMax = 94;                           // If the dew sensor is indicating condensation, you may want to start ventilation. Increase above 100 to disable
+unsigned int lowRHPWM = 128;               // PWM controls for the motors. Set to 255 for always on/always off
 
 
 //  SETUP  /////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -195,7 +194,7 @@ void setup()
   //  Serial.println("file open failed!");
   //  myFile.close();
   //  return; }
-  myFile.println(F("Ti\tRHi\tTo\tRHo\tmBar\tRain\tHSoil\tDew\tSun_Rain_Dew_BOut_Heat_HOT_Water_<RH\tt_ms\tDate")); // Header: T & RH in, T & RH out, pressure, Rain, Soil, Dew, Dailight, Blackout, Heating, Too hot, watering, reduce humidity, time since start, date from network
+  myFile.println(F("Ti\tRHi\tTo\tRHo\tmBar\tRain\tHSoil\tDew\tSn_Rn_BO_Ht_<Ht_H2O_RH_<RH\tt_ms\tDate")); // Header: T & RH in, T & RH out, pressure, Rain, Soil, Dew, Dailight, Blackout, Heating, Too hot, watering, reduce humidity, time since start, date from network
   myFile.close();
 
   time_begin = millis();                                 // Start logging time
@@ -213,7 +212,7 @@ void loop()
   else
   {
     ConnOK = false;
-    Serial.println(F("CWQAP"));         // Be sure to disconnect. Helps to avoid keep-disconnected
+    Serial.println(F("AT+CWQAP"));         // Be sure to disconnect. Helps to avoid keep-disconnected
     Serial.readString();
     //delayFnct();
     digitalWrite(relay_WiFiReset, LOW); // Hard reset of WiFi ESP8266 works better than anything to clear "Busy p..." lock-ups
@@ -266,32 +265,16 @@ void loop()
 
 
   // ACQUIRE Arduino analog input channels
-  rain = ( (int) (1023 - analogRead(anaCh_rain)) )>>2;         // Rescale. A high value is indicating rain (max 100)
-  sun =  ( (int) (1023 - analogRead(anaCh_sun))  ) >>2;        // Rescale. A high value is indicating sunlight (max 100)
-  dew =  ( (int) (analogRead(anaCh_dew)) )>>2;                 // Rescale. A high value is indicating condensation (max 100)
-  soil = ( (int) (1023 - analogRead(anaCh_soil)) )>>2;         // Rescale. Value is indicating how much water is present in the soil (max 100)
-  CtrlByte &= ( ((int)(sun/50))>>7+ ((int)(rain/50))>>6 + 31 );// Log digital sun/rain
-
-
-  // WRITE/UPDATE/UPLOAD routines -------------------------------------------------------------------------------------------------------
-
-  update_LCD   ();
-
-  if (ConnOK) 
-    { update_WiFi (); // Thingspeak update routine
-    }
-
-  //update_Serial();  // COMMENTED OUT, IT MAY INTERFERE WITH WiFi card which is also on RX-TX Serial lines. Un-comment on for debug
-
-  // UPDATE SD card
-  myFile = SD.open(file_name, FILE_WRITE);
-  //if (!myFile) {SDflag=1;}
-  update_SD   ();
-  myFile.close();
-
+  rain = ( (int) (1023 - analogRead(anaCh_rain))/10.23 );         // Rescale. A high value is indicating rain (max 100)
+  sun =  ( (int) (1023 - analogRead(anaCh_sun))/10.23  ) ;        // Rescale. A high value is indicating sunlight (max 100)
+  dew =  ( (int) (analogRead(anaCh_dew))/10.23 );                 // Rescale. A high value is indicating condensation (max 100)
+  soil = ( (int) (1023 - analogRead(anaCh_soil))/10.23 );         // Rescale. Value is indicating how much water is present in the soil (max 100)
+  CtrlByte &=  63 ;
+  CtrlByte |= ( ((sun/50)<<7)+ ((rain/50)<<6)  );// Log digital sun/rain
+  
 
   // CONTROLS IN THE GREENHOUSE ---------------------------------------------------------------------------------------------------------------------
-  
+
   // Black-out control, to force plants via light (growing/flowering/fruiting/dormiency/...)--------------------------------------
   if (sun && !dayStateMachine) {
     dayflag += 1; // Count to avoid jitter on stray light, allows for max DayJitt wrong light detections
@@ -302,31 +285,31 @@ void loop()
   }
   if ((time_elapsed - timeDiffMeas) > LenDay && dayStateMachine == 1)         // If we have had enough day turn on the blackout system. May be connected also to a small air-circulation fan, too keep low T & RH
   { CtrlByte |= B00100000;//BOUTbool = HIGH;
-    digitalWrite(relay_BOut, (CtrlByte<<5)&1);
+    digitalWrite(relay_BOut, (CtrlByte>>5)&1);
     dayStateMachine = 2;
   }
   if ((time_elapsed - timeDiffMeas) > LenBO + LenDay && dayStateMachine == 2) // After a while open again the blackout tent, for easing ventilation (it should be already night outside)
   { CtrlByte &= B11011111;//BOUTbool = LOW;
-    digitalWrite(relay_BOut, (CtrlByte<<5)&1);
+    digitalWrite(relay_BOut, (CtrlByte>>5)&1);
     dayStateMachine = 0;
     dayflag = 0;
   }
 
 
   // Heat Control--------------------------------------
-  if (Ti < HeatOn)
+  if (Ti < HtOn)
   { CtrlByte |= B00010000;}//heatbool = HIGH;
-  if (Ti > HeatOff)         // Heating On and Off have different values, to allow for hysteresis
+  if (Ti > HtOff)         // Heating On and Off have different values, to allow for hysteresis
   { CtrlByte &= B11101111;}//heatbool  LOW;
-  digitalWrite(relay_Heat, (CtrlByte<<4)&1);
+  digitalWrite(relay_Heat, (CtrlByte>>4)&1);
 
 
   // Overheat Control--------------------------------------
-  if (Ti > OHeatOn)                // Overheating indications On and Off have different values, to allow for hysteresis
+  if (Ti > OHtOn)                // Overheating indications On and Off have different values, to allow for hysteresis
   { CtrlByte |= B00001000;}//overheatbool = HIGH;}
-  if (Ti < OHeatOff)
+  if (Ti < OHtOff)
   { CtrlByte &= B11110111;}//overheatbool = LOW; }
-  analogWrite(relay_Overheat, ((CtrlByte<<3)&1)*overheatPWM);
+  analogWrite(relay_Overheat, ((CtrlByte>>3)&1)*overheatPWM);
 
 
   // Watering Control--------------------------------------
@@ -334,37 +317,57 @@ void loop()
   { CtrlByte |= B00000100;}//waterbool = HIGH; }
   if (soil > H2Ooff)
   { CtrlByte &= B11111011;}//waterbool = LOW;  }
-  digitalWrite(relay_Water, (CtrlByte<<2)&1);
+  digitalWrite(relay_Water, (CtrlByte>>2)&1);
   //Serial.println(soil);
   //Serial.println(H2Oon);
   //Serial.println(H2Ooff);
   
 
   // Humidification Control--------------------------------------
-  if (RHi > HumidifyOn)              // Humidifying indications On and Off have different values, to allow for hysteresis
+  if (RHi < RHon)              // Humidifying indications On and Off have different values, to allow for hysteresis
   { CtrlByte |= B00000010;}//humidifybool = HIGH;}
-  if (RHi < HumidifyOff)
+  if (RHi > RHoff)
   { CtrlByte &= B11111101;}//humidifybool = LOW; }
-  digitalWrite(relay_Humidify, (CtrlByte<<1)&1);
+  digitalWrite(relay_Humidify, (CtrlByte>>1)&1);
 
   
-  // Control to lower the air humidity --------------------------------------    // http://planetcalc.com/2167/    RH/T proportional to absolute H2O content (T in Kelvin)
-  if ( ((RHi > RHOn && RHi * (((int)To) + 273)) > RHo * (((int)Ti) + 273) || dew > DewMax) && To > RHminT) // If [(internal_RH too high AND internal_H2O<external_H2O) OR condensation happening] AND external temperature not too low
-    //if ( (RHi>RHOn  || dew>DewMax) && To>RHminT)// If [(internal_RH too high AND internal_H2O<external_H2O) OR condensation happening] AND external temperature not too low
-  { CtrlByte |= B00000001;}//lowRHbool = HIGH; }// Switching on can decrease internal RH
-  if (RHi < RHOff || RHi / Ti < RHo / To || To < RHminT)                    // If RH inside is low enough or the external absolute humidity is higher =>turn off
-  { CtrlByte & B11111110;}//lowRHbool = LOW;  }
+  // Control to lower the air humidity --------------------------------------                                   // http://planetcalc.com/2167/    RH/T proportional to absolute H2O content (T in Kelvin)
+  if (   (      ( RHi > ORHon &&(RHi*((int)To+273)>RHo*((int)Ti+273)) )      || dew > DewMax   )  && To > ORHT) // If [(internal_RH too high AND internal_H2O<external_H2O) OR condensation happening] AND external temperature not too low
+    //if ( (RHi>ORHon  || dew>DewMax) && To>ORHT)                                                               // If [(internal_RH too high AND internal_H2O<external_H2O) OR condensation happening] AND external temperature not too low
+  { CtrlByte |= B00000001;}//lowRHbool = HIGH; }                                                                // Switching on can decrease internal RH
+  if ( RHi < ORHoff    ||    RHi*((int)To+273)<RHo*((int)Ti+273)    ||    To < ORHT)                            // If RH inside is low enough or the external absolute humidity is higher =>turn off
+  { CtrlByte &= B11111110;}//lowRHbool = LOW;  }
   analogWrite(relay_LowRH, (CtrlByte&1)*lowRHPWM);
 
 
 
-  delay(45000);// lengthen the loop, act around twice per minute.
+  // WRITE/UPDATE/UPLOAD routines -------------------------------------------------------------------------------------------------------
+
+  //Serial.println(F("UPDATING"));
+  update_LCD   ();
+
+  if (ConnOK) 
+    { update_WiFi (); // Thingspeak update routine
+    }
+
+  //update_Serial();  // COMMENTED OUT, IT MAY INTERFERE WITH WiFi card which is also on RX-TX Serial lines. Un-comment on for debug
+
+  // UPDATE SD card
+  myFile = SD.open(file_name, FILE_WRITE);
+  //if (!myFile) {SDflag=1;}  
+  update_SD   ();
+  myFile.close();
+
+
+
+  delay(100000);// lengthen the loop, act around 0.5 per minute.
 }   // end of main loop
 
 
 // ROUTINES-FUNCTIONS  ////////////////////////////////////////////////////////////////////////////////////////
 
 void update_SD() {
+  Serial.println(F("UPDATINGSD"));
   myFile.print(Ti);
   myFile.print(F("\t"));
   myFile.print(RHi);
@@ -384,8 +387,10 @@ void update_SD() {
   myFile.print(CtrlByte);
   myFile.print(F("\t"));
   myFile.print(time_elapsed);
-  myFile.print(F("\Date"));
+  myFile.print(F("\t"));
   myFile.println(cmd2Buf);
+  myFile.flush();
+  //Serial.println(F("UPDATED_SD"));
 }
 
 void update_LCD() {                 // LCD display routine
@@ -409,9 +414,10 @@ void update_LCD() {                 // LCD display routine
   lcd.setCursor(13, 1);
   lcd.print(soil);
   lcd.setCursor(15, 0);
-  lcd.print( CtrlByte<<4   , HEX); // Digital value, to sum up important parameters
+  lcd.print( CtrlByte>>4   , HEX); // Digital value, to sum up important parameters
   lcd.setCursor(15, 1);
-  lcd.print( CtrlByte&&15 , HEX); // Digital value, to sum up important parameters
+  lcd.print( CtrlByte&15 , HEX); // Digital value, to sum up important parameters
+  
 }
 
 
@@ -454,7 +460,7 @@ void connectWiFi()
 void  update_WiFi ()
 { cmdBuf[0] = {0};                           // 1) Update the values on thingspeak with measured data
   strcat(cmdBuf, "AT+CIPSTART=\"TCP\",\"");  // api.thingspeak.com
-  strcat(cmdBuf, DST_IP);
+  strcat(cmdBuf, DST_IP);                   
   strcat(cmdBuf, "\",80");
   Serial.println(cmdBuf);
   delayFnct();
@@ -481,6 +487,10 @@ void  update_WiFi ()
   strcat(cmdBuf, dtostrf( soil , 0, 0, buf));
   strcat(cmdBuf, "&field8=");
   strcat(cmdBuf, dtostrf( CtrlByte , 0, 0, buf)); // digital flags to log
+  //strtmp=String(CtrlByte,BIN);
+  //strtmp.toCharArray(buf, 8);
+  //strcat(cmdBuf, buf ); // digital flags to log
+  //Serial.println(buf);
   strcat(cmdBuf, "\r\n\r\n");
   // CIPSEND
   strcat(cmd2Buf, "AT+CIPSEND=");
@@ -490,7 +500,8 @@ void  update_WiFi ()
   if (Serial.find(">"))
     { Serial.print(cmdBuf);  }
   else
-    { Serial.println(F("AT+CIPCLOSE")); }
+    { //Serial.print(cmdBuf);
+      Serial.println(F("AT+CIPCLOSE")); }
   Serial.readString();
   delayFnct();
 
@@ -515,7 +526,8 @@ void  update_WiFi ()
     delayFnct();
     cmdBuf[0] = {0};
     cmd2Buf[0] = {0};
-    Serial.readBytesUntil(';', cmd2Buf, 140);//read quickly 'till first variable (avoids overflow)
+    Serial.readBytesUntil(';', cmdBuf, 140);//read quickly 'till first variable (avoids overflow)
+    cmdBuf[0] = {0};
     i = Serial.readBytesUntil(';', cmdBuf, 140); //read quickly all variables (avoids overflow)
     cmdBuf[i] = {0};
     //Serial.print(F("PARAMS:"));
@@ -530,22 +542,22 @@ void  update_WiFi ()
         j = 0;
         switch (k)
         { case 1:                    /// ATTENTION: NO CHECK THAT VALUES ARE ACCEPTABLE, ENTER CORRECT VALUES IN THINGSPEAK DESCRIPTION!!!!
-            HeatOn = atof(cmd2Buf);
-            break;
-          case 3:
-            HeatOff = atof(cmd2Buf);
-            break;
-          case 5:
             LenDay = atol(cmd2Buf);
             break;
-          case 7:
+          case 3:
             LenBO = atol(cmd2Buf);
             break;
+          case 5:
+            HtOn = atof(cmd2Buf);
+            break;
+          case 7:
+            HtOff = atof(cmd2Buf);
+            break;
           case 9:
-            OHeatOn = atoi(cmd2Buf);
+            OHtOn = atof(cmd2Buf);
             break;
           case 11:
-            OHeatOff = atoi(cmd2Buf);
+            OHtOff = atof(cmd2Buf);
             break;
           case 13:
             H2Oon = atoi(cmd2Buf);
@@ -554,15 +566,21 @@ void  update_WiFi ()
             H2Ooff = atoi(cmd2Buf);
             break;
           case 17:
-            RHOn = atoi(cmd2Buf);
+            RHon = atoi(cmd2Buf);
             break;
           case 19:
-            RHOff = atoi(cmd2Buf);
+            RHoff = atoi(cmd2Buf);
             break;
           case 21:
-            RHminT = atoi(cmd2Buf);
+            ORHon = atoi(cmd2Buf);
             break;
           case 23:
+            ORHoff = atoi(cmd2Buf);
+            break;
+          case 25:
+            ORHT = atoi(cmd2Buf);
+            break;
+          case 27:
             DewMax = atoi(cmd2Buf);
             break;
           default:
@@ -578,30 +596,29 @@ void  update_WiFi ()
   Serial.readString();      // close all communication queues
   delayFnct();
 
-  //  Serial.print(F("HeatOn "));
-  //  Serial.println(HeatOn);
-  //  Serial.print(F("HeatOff "));
-  //  Serial.println(HeatOff);
-  //  Serial.println(LenDay);
-  //  Serial.println(LenBO);
-  //  Serial.println(OHeatOn);
-  //  Serial.println(OHeatOff);
-  //  Serial.println(H2Oon);
-  //  Serial.println(H2Ooff);
-  //  Serial.println(RHOn);
-  //  Serial.println(RHOff);
-  //  Serial.println(RHminT);
-  //  Serial.print(F("DewMax "));
-  //  Serial.println(DewMax);
-
+//    Serial.println(LenDay);
+//    Serial.println(LenBO);
+//    Serial.print(F("HtOn "));
+//    Serial.println(HtOn);
+//    Serial.print(F("HtOff "));
+//    Serial.println(HtOff);
+//    Serial.println(OHtOn);
+//    Serial.println(OHtOff);
+//    Serial.println(H2Oon);
+//    Serial.println(H2Ooff);
+//    Serial.println(RHon);
+//    Serial.println(RHoff);
+//    Serial.println(ORHon);
+//    Serial.println(ORHoff);
+//    Serial.println(ORHT);
+//    Serial.println(DewMax);
 
   cmdBuf[0] = {0};                          // 3) Finish by getting the date from server
   cmd2Buf[0] = {0};                         // will save here the date string
-  strcat(cmdBuf, "AT+CIPSTART=\"TCP\",\"");
-  strcat(cmdBuf, DST_IP);
-  strcat(cmdBuf, "\",80");
-  Serial.println(cmdBuf);
-  delayFnct();
+  Serial.print(F("AT+CIPSTART=\"TCP\",\""));
+  Serial.print(DST_IP);
+  Serial.println(F("\",80"));
+  //delayFnct();
   if (Serial.find("OK")) {
     delay(10); //LcdDbg("TCPOK");
   }
@@ -609,7 +626,8 @@ void  update_WiFi ()
   Serial.readString();
   // Send GET string
   Serial.println(F("AT+CIPSEND=12"));
-  delayFnct();  if (Serial.find(">"))
+  delayFnct();  
+  if (Serial.find(">"))
   { Serial.print(F("GET date\r\n\r\n"));
     delayFnct();
   }
@@ -617,9 +635,11 @@ void  update_WiFi ()
   { delayFnct();
     Serial.readBytes(cmd2Buf, 29);
   }
+  cmd2Buf[30] = {0};                         // will save here the date string
+  Serial.print(F("DATE:"));
+  Serial.println(cmd2Buf);
   Serial.readString();
   delayFnct();
-  
 }
 
 
@@ -644,6 +664,8 @@ void update_Serial()           // Not use for interference with WiFi module.
   Serial.print(dew);
   Serial.print(F("\tDay:"));
   Serial.print(sun);
+  Serial.print(F("\tCtrlByte:"));
+  Serial.print(CtrlByte);
   Serial.print(F("\tT:"));
   Serial.print(F("\tDate:"));
   Serial.println(cmd2Buf);
