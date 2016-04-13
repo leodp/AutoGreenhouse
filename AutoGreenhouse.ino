@@ -12,6 +12,8 @@
 // Mux/Demux Digit 09 for multiplexing the IIC line (T/RH sensors have the same IIC address)
 // 1x WiFi card to send data to Thingspeak
 
+#include <avr/wdt.h> // include watchdog timer
+
 // SFE_BMP180 pressure module
 #include <SFE_BMP180.h>  //pressure sensor
 SFE_BMP180 PRESSURE;
@@ -85,37 +87,36 @@ unsigned char dew = 0;            // dew point sensor
 unsigned char soil = 0;           // Soil humidity sensor
 //unsigned int SDflag = 0;        // file open flag
 unsigned char dayflag = 0;        // to detect the day
-double timeDiffMeas = 0;          // variable to measure the time passed on the Black out tent
+unsigned long timeDiffMeas = 0;          // variable to measure the time passed on the Black out tent
 unsigned char dayStateMachine = 0;// for controlling blackout opening/closing routine
-
 byte CtrlByte  = B00000000;       // http://playground.arduino.cc/Code/BitMath some booleans for recording the status of the controls: sun,rain,humidify,blackOut,heating,overheated,watering,reduceRH
 
 
 // VALUES TO SET AUTOMATIC CONTROLS ------------------------  EDIT HERE TO SUIT YOUR NEEDS ----------------------
 
-double Day  = 11.50;                  // Time of illumination/allowed daylength (in h, first value indicate the effective hours)
-double BO =    3;                     // Time to keep Blackout. During the night it can be opened for air exchange. Increase according to your needs
-#define DayJitt   5                      // Number of day-begin detections. (To avoid jitter, due for example to short light pulses, i.e. lights on for 1min during night visits)
-                                         // No PWM on BOut motor, as 1 and 0 control the two motor directions (open/close)
-double Ht1 = 0.5;                        // Too low Temp: start heating. Need float precision on temp warning close to 0°C
-double Ht0 = 3;                          // Safe Temp, stop heating
+double Day  = 11.50;             // Time of illumination/allowed daylength (in h, first value indicate the effective hours)
+double BO =   3.0;               // Time to keep Blackout. During the night it can be opened for air exchange. Increase according to your needs
+#define DayJitt   4              // Number of day-begin detections. (To avoid jitter, due for example to short light pulses, i.e. lights on for 1min during night visits)
+                                 // No PWM on BOut motor, as 1 and 0 control the two motor directions (open/close)
+double Ht1 = 0.3;                // Too low Temp: start heating. Need float precision on temp warning close to 0°C
+double Ht0 = 4.0;                // Safe Temp, stop heating
 
-char OHt1 = 40;                          // Open window in case of overheating: max acceptable temp before plants suffer
-char OHt0 = 30;                          // Close window to keep this minimum Temp safeguarded
-#define overheatPWM   128                // PWM controls for the motors. Set to 255 for always on/always off
+char OHt1 = 38;                  // Open window in case of overheating: max acceptable temp before plants suffer
+char OHt0 = 27;                  // Close window to keep this minimum Temp safeguarded
+#define overheatPWM   128        // PWM controls for the motors. Set to 255 for always on/always off
 
-char H2O1 = 15;                          // Turn on auto watering (value from soil humidity sensor)
-char H2O0 = 30;                          // Turn off auto watering
-unsigned char H2OT = 30;                 // Auto watering switch-on time. Set to 0 to switch on auto-watering based only on soil humidity. In minutes. Max 255
+char H2O1 = 15;                  // Turn on auto watering (value from soil humidity sensor)
+char H2O0 = 30;                  // Turn off auto watering
+unsigned char H2OT = 30;         // Auto watering switch-on time. Set to 0 to switch on auto-watering based only on soil humidity. In minutes. Max 255
 
-char RH1 = 15;                           // Too low Temp: start heating. Need float precision on temp warning close to 0°C
-char RH0 = 35;                           // Safe Temp, stop heating
+char RH1 = 15;                   // Too low Temp: start heating. Need float precision on temp warning close to 0°C
+char RH0 = 35;                   // Safe Temp, stop heating
 
-char ORH1    = 95;                       // Max humidity allowed: take precautions to reduce humidity (open windows, ventilate with external air)
-char ORH0   = 75;                        // Safe humidity level (reduced molds/mildew risk): switch off ventilation.
-char ORHT  = 5;                          // If temperature falls below this value then stop ventilation to avoid undercooling, even if RH is high
-char ODew = 94;                          // If the dew sensor is indicating condensation, you may want to start ventilation. Increase above 100 to disable
-#define lowRHPWM   128                   // PWM controls for the motors. Set to 255 for always on/always off
+char ORH1    = 60;               // Max humidity allowed: take precautions to reduce humidity (open windows, ventilate with external air)
+char ORH0   = 55;                // Safe humidity level (reduced molds/mildew risk): switch off ventilation.
+char ORHT  = 5;                  // If temperature falls below this value then stop ventilation to avoid undercooling, even if RH is high
+char ODew = 94;                  // If the dew sensor is indicating condensation, you may want to start ventilation. Increase above 100 to disable
+#define lowRHPWM   128           // PWM controls for the motors. Set to 255 for always on/always off
 
 
 //  SETUP  /////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -146,8 +147,6 @@ void setup()
   digitalWrite(relay_Water, LOW);         // LOW=0 = not operative = no watering
   digitalWrite(relay_LowRH, LOW);         // LOW=0 = not operative = no dehumidify
   
-
-
   PRESSURE.begin();
   //  if (PRESSURE.begin()) //debug in alternative to the above command
   //   { LcdDbg("BMP180 init 1");}
@@ -157,7 +156,7 @@ void setup()
   //   }
 
   Serial.begin(SERIALspeed);           // Start serial communication with WIFi module.
-  Serial.setTimeout(5000);             // Set time to wait for response strings to be found. Keep high to avoid WiFi problems (i.e. long connect/reply times)
+  Serial.setTimeout(4000);             // Set time to wait for response strings to be found. Keep high to avoid WiFi problems (i.e. long connect/reply times)
   digitalWrite(relay_WiFiReset, LOW);  // Hard reset of WiFi ESP8266 works better than anything to avoid "Busy p..." errors
   delay(500);
   digitalWrite(relay_WiFiReset, HIGH);
@@ -176,58 +175,56 @@ void setup()
     //WiFiMOD = false;
   }
 
-  SD.begin(chipSelectSD);                                // Start writing to file in microSD card
-  myFile = SD.open(file_name, FILE_WRITE);
-  //delayFnct();
-  //if (!myFile) {
-  //  Serial.println("file open failed!");
-  //  myFile.close();
-  //  return; }
+//  SD.begin(chipSelectSD);                                // Start writing to file in microSD card
+//  myFile = SD.open(file_name, FILE_WRITE);
+//  //delayFnct();
+//  //if (!myFile) {
+//  //  Serial.println("file open failed!");
+//  //  myFile.close();
+//  //  return; }
   myFile.println(F("Ti\tRHi\tTo\tRHo\tmBar\tRain\tHSoil\tDew\tSn_Rn_BO_Ht_<Ht_H2O_RH_<RH\tt\tDate")); // Header: T & RH in, T & RH out, pressure, Rain, Soil, Dew, Dailight, Blackout, Heating, Too hot, watering, reduce humidity, time since start, date from network
   myFile.close();
+
+  wdt_enable(WDTO_8S);  // enable watchdog timer 8 seconds
 }
 
 
 // Main Loop  ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 void loop()
 {
+  wdt_reset();
   //  if necessary reconnect to the wifi  (connection may be lost due to a weak or temporary WiFi signal)
   Serial.println(F("AT+CIFSR"));        // does not always work as expected (detect connection), but helps to reconnect if necessary
   delayFnct();
   if (Serial.find(IPWiFiCARD))
-  { ConnOK = true;   }                  // It's connected, no need to do anything Serial.println(F("Connected!"));}
+  { ConnOK = true;                     // It's connected, no need to do anything Serial.println(F("Connected!"));}
+    //wdt_reset()
+    ;}
   else
   {
     ConnOK = false;
     Serial.println(F("AT+CWQAP"));         // Be sure to disconnect. Helps to avoid keep-disconnected
+    wdt_reset();
     Serial.readString();
     //delayFnct();
     digitalWrite(relay_WiFiReset, LOW); // Hard reset of WiFi ESP8266 works better than anything to clear "Busy p..." lock-ups
     delay(500);
     digitalWrite(relay_WiFiReset, HIGH);
+    wdt_reset();
     Serial.println(F("AT+RST"));
     Serial.readString();
+    wdt_reset();
     delayFnct();
     Serial.println(F("AT+CIPMUX=0"));   // Set the connection mode, no mux
+    wdt_reset();
     connectWiFi();
   }
 
   // ACQUIRE SENSORS DATA---------------------------------------------------------------
  
-  // ACQUIRE T & RH
-  digitalWrite(relay_I2cMultiplex, 0);  // Switch to the internal temp/RH sensor
-  delayFnct();                          // Need some delay to avoid "998" readout
-  do { Ti =    myTemp.readTemperature();// Read internal temp and RH
-       RHi =  myHumidity.readHumidity();
-     } while(RHi==998 || Ti==998);      // Sometimes the readout is wrong: in case repeat the measurement. ATENTION, MAY LOCK!
-  digitalWrite(relay_I2cMultiplex, 1);  // Switch to the external temp/RH sensor
-  delayFnct();                          // Need some delay to avoid "998" readout
-  do { To =    myTemp.readTemperature();// Read external temp and RH
-       RHo =  myHumidity.readHumidity();
-     } while(RHo==998 || To==998);      // Sometimes the readout is wrong: in case repeat the measurement. ATENTION, MAY LOCK!
-
-  
   // ACQUIRE PRESSURE
+  wdt_reset();
+  cmd2Buf[0] = {0};
   cmd2Buf[0] = PRESSURE.startTemperature();                 // Start a temperature measurement:If request is successful, the number of s to wait is returned, else 0
   if (cmd2Buf[0] != 0)
   { delay(cmd2Buf[0]);                                      // Wait for the measurement to complete. Return=0 is fail
@@ -246,7 +243,23 @@ void loop()
   }     //else LcdDbg(F("ET2\n"));
 
 
+  // ACQUIRE T & RH
+  wdt_reset();
+  digitalWrite(relay_I2cMultiplex, 0);  // Switch to the internal temp/RH sensor
+  delayFnct();                          // Need some delay to avoid "998" readout
+  do { Ti =    myTemp.readTemperature();// Read internal temp and RH
+       RHi =  myHumidity.readHumidity();
+     } while(RHi==998 || Ti==998);      // Sometimes the readout is wrong: in case repeat the measurement. ATENTION, MAY LOCK!
+  digitalWrite(relay_I2cMultiplex, 1);  // Switch to the external temp/RH sensor
+  delayFnct();                          // Need some delay to avoid "998" readout
+  do { To =    myTemp.readTemperature();// Read external temp and RH
+       RHo =  myHumidity.readHumidity();
+     } while(RHo==998 || To==998);      // Sometimes the readout is wrong: in case repeat the measurement. ATENTION, MAY LOCK!
+
+  
+
   // ACQUIRE Arduino analog input channels
+  wdt_reset();
   rain = ( (int) (1023 - analogRead(anaCh_rain))/10.23 );         // Rescale. A high value is indicating rain (max 100)
   sun =  ( (int) (1023 - analogRead(anaCh_sun))/10.23  ) ;        // Rescale. A high value is indicating sunlight (max 100)
   dew =  ( (int) (analogRead(anaCh_dew))/10.23 );                 // Rescale. A high value is indicating condensation (max 100)
@@ -257,97 +270,121 @@ void loop()
 
   // CONTROLS IN THE GREENHOUSE ---------------------------------------------------------------------------------------------------------------------
 
+  wdt_reset();
+  
   // Black-out control, to force plants via light (growing/flowering/fruiting/dormiency/...)--------------------------------------
-  if (sun && !dayStateMachine) {
+  if (CtrlByte>>7 && !dayStateMachine) {
     dayflag += 1; // Count to avoid jitter on stray light, allows for max DayJitt wrong light detections
   }
   if (dayflag == DayJitt && dayStateMachine == 0)                             // Start recording the day length, up to when we have reached the allowed illumination time
-  { timeDiffMeas = millis()/1000;
+  { timeDiffMeas = millis();                                                  // http://www.leonardomiliani.com/2012/come-gestire-loverflow-di-millis/
     dayStateMachine = 1;
   }
-  if ((millis()/1000 - timeDiffMeas)/60/60 > Day && dayStateMachine == 1)     // If we have had enough day turn on the blackout system. May be connected also to a small air-circulation fan, too keep low T & RH
+  if ( (unsigned long)(millis() - timeDiffMeas) > (unsigned long)((float)(Day*60*60*1000)) && dayStateMachine == 1)     // If we have had enough day turn on the blackout system. May be connected also to a small air-circulation fan, too keep low T & RH
   { CtrlByte |= B00100000;
     digitalWrite(relay_BOut, (CtrlByte>>5)&1);
     dayStateMachine = 2;
   }
-  if ((millis()/1000 - timeDiffMeas)/60/60 > BO + Day && dayStateMachine == 2) // After a while open again the blackout tent, for easing ventilation (it should be already night outside)
+  if ( (unsigned long)(millis() - timeDiffMeas) > (unsigned long)((float)((BO + Day)*60*60*1000)) && dayStateMachine == 2) // After a while open again the blackout tent, for easing ventilation (it should be already night outside)
   { CtrlByte &= B11011111;
     digitalWrite(relay_BOut, (CtrlByte>>5)&1);
     dayStateMachine = 0;
     dayflag = 0;
   }
 
+  //Serial.print(CtrlByte>>7);
+  //Serial.print(F("\t"));
+  //Serial.print(dayflag);
+  //Serial.print(F("\t"));
+  //Serial.println(dayStateMachine);
+  //Serial.print((unsigned long)(millis()));
+  //Serial.print(F("\t"));
+  //Serial.print((unsigned long)(millis() - timeDiffMeas));
+  //Serial.print(F("\t"));
+  //Serial.print(  (unsigned long) ( (float)(Day*60*60*1000) )  );
+  //Serial.print(F("\t"));
+  //Serial.print(  (unsigned long) ( (float)((BO + Day)*60*60*1000) )  );
+  //Serial.print(F("\t"));
+  //Serial.println((unsigned long)(((long)H2OT)*60*1000));
+  //wdt_reset();
+  //Serial.readString();
+  //delayFnct();
+  //wdt_reset();
 
   // Heat Control--------------------------------------
-  if (Ti < Ht1)
+  if (Ti < (float)Ht1)
   { CtrlByte |= B00010000;}
-  if (Ti > Ht0)         // Heating On and Off have different values, to allow for hysteresis
+  if (Ti > (float)Ht0)         // Heating On and Off have different values, to allow for hysteresis
   { CtrlByte &= B11101111;}
   digitalWrite(relay_Heat, (CtrlByte>>4)&1);
 
 
   // Overheat Control--------------------------------------
-  if (Ti > OHt1)                // Overheating indications On and Off have different values, to allow for hysteresis
+  if (Ti > (float)OHt1)                // Overheating indications On and Off have different values, to allow for hysteresis
   { CtrlByte |= B00001000;}
-  if (Ti < OHt0)
+  if (Ti < (float)OHt0)
   { CtrlByte &= B11110111;}
   analogWrite(relay_Overheat, ((CtrlByte>>3)&1)*overheatPWM);
 
 
   // Watering Control--------------------------------------
-  if (H2OT==0)
-    {  if (soil < H2O1)                 // Watering On and Off have different values, to allow for hysteresis
+  if ((int)H2OT==0)
+    {  if ((int)soil < (int)H2O1)                 // Watering On and Off have different values, to allow for hysteresis
           { CtrlByte |= B00000100;}
-       if (soil > H2O0)
+       if ((int)soil > (int)H2O0)
           { CtrlByte &= B11111011;}
     }
    else 
-    {  if( dayStateMachine == 1)                     // if START DAY:timeDiffMeas
+    {  if( dayStateMachine == 1)                     // if START DAY:timeDiffMeas. At the first sunlights, to avoid nightwatering/snails
         {  CtrlByte |= B00000100; }                  // then switch on
-       if ((millis()/1000 - timeDiffMeas)/60 > H2OT) // If watering has been on for long enough (in minutes)
-        {  CtrlByte &= B11111011; }                  // switch off
+       if ((unsigned long)(millis() - timeDiffMeas) > (unsigned long)(((long)H2OT)*60*1000)) // If watering has been on for long enough (in minutes)
+        {  //Serial.println(F("WATER OFF"));
+           CtrlByte &= B11111011; }                  // switch off
     }
   digitalWrite(relay_Water, (CtrlByte>>2)&1);
-  //Serial.println(soil);
-  //Serial.println(H2O1);
-  //Serial.println(H2O0);
-  
+
 
   // Humidification Control--------------------------------------
-  if (RHi < RH1)              // Humidifying indications On and Off have different values, to allow for hysteresis
+  if ((int)RHi < (int)RH1)              // Humidifying indications On and Off have different values, to allow for hysteresis
   { CtrlByte |= B00000010;}
-  if (RHi > RH0)
+  if ((int)RHi > (int)RH0)
   { CtrlByte &= B11111101;}
   digitalWrite(relay_Humidify, (CtrlByte>>1)&1);
 
   
-  // Control to lower the air humidity -----------------------------------                                   // http://planetcalc.com/2167/    RH/T proportional to absolute H2O content (T in Kelvin)
-  if (   (      ( RHi > ORH1  &&(RHi*((int)To+273)>RHo*((int)Ti+273)) )      || dew > ODew   )  && To > ORHT)// If [(internal_RH too high AND internal_H2O<external_H2O) OR condensation happening] AND external temperature not too low
-    //if ( (RHi>ORH1  || dew>ODew) && To>ORHT)                                                               // If [(internal_RH too high AND internal_H2O<external_H2O) OR condensation happening] AND external temperature not too low
+  // Control to lower the air humidity -----------------------------------                                   // http://planetcalc.com/2167/    https://carnotcycle.wordpress.com/2012/08/04/how-to-convert-relative-humidity-to-absolute-humidity/
+  if (   ( (int)RHi > (int)ORH1   || (int)dew > (int)ODew   )  && To > (float)ORHT)// If [(internal_RH too high) OR condensation happening] AND external temperature not too low
   { CtrlByte |= B00000001;}                                                                                  // Switching on can decrease internal RH
-  if (   (      ( RHi < ORH0                                          )      && dew < ODew   )  || To < ORHT)// If RH inside is low enough or the external absolute humidity is higher =>turn off
+  if (   ( (int)RHi < (int)ORH0   && (int)dew < (int)ODew   )  || To < (float)ORHT)// If RH inside is low enough or the external absolute humidity is higher =>turn off
   { CtrlByte &= B11111110;}
   analogWrite(relay_LowRH, (CtrlByte&1)*lowRHPWM);
-
+  
 
   // WRITE/UPDATE/UPLOAD routines -------------------------------------------------------------------------------------------------------
 
   //Serial.println(F("UPDATING"));
+  wdt_reset();
   update_LCD   ();
 
   if (ConnOK) 
-    { update_WiFi ();}// Thingspeak update routine
+    { wdt_reset();
+      update_WiFi ();}// Thingspeak update routine
 
+  //wdt_reset();
   //update_Serial();  // COMMENTED OUT, IT MAY INTERFERE WITH WiFi card which is also on RX-TX Serial lines. Un-comment on for debug
 
   // UPDATE SD card
+  wdt_reset();
   myFile = SD.open(file_name, FILE_WRITE);
   //if (!myFile) {SDflag=1;}  
   update_SD   ();
   myFile.close();
-
-
-  delay(100000);// lengthen the loop, act around 0.5 per minute.
+  wdt_reset();
+  
+  for (i = 0; i < 15; i++) // pause 6 sec per loop
+    { delay(6000);
+      wdt_reset();
+    }
 }   // end of main loop
 
 
@@ -385,7 +422,7 @@ void update_LCD() {                 // LCD display routine
   lcd.setCursor(0, 0);              // Start at character 0 on line 0
   lcd.print(F("I____'__\%"));       // LCD preparation of indications: I(internal) '(degrees C) %(RH%)
   lcd.setCursor(0, 1);              // Start at character 0 on line 1
-  lcd.print(F("O____'__\%r  s"));   // LCD preparation of indications:  O(outside) '(degrees C) %(RH%) d(dewmax) s(soil)
+  lcd.print(F("O____'__\%d  s"));   // LCD preparation of indications:  O(outside) '(degrees C) %(RH%) d(dewmax) s(soil)
   lcd.setCursor(1, 0);
   lcd.print(Ti, 1);
   lcd.setCursor(1, 1);
@@ -397,7 +434,7 @@ void update_LCD() {                 // LCD display routine
   lcd.setCursor(9, 0);
   lcd.print(pressure, 1);
   lcd.setCursor(10, 1);
-  lcd.print((int)rain);
+  lcd.print((int)dew);
   lcd.setCursor(13, 1);
   lcd.print((int)soil);
   lcd.setCursor(15, 0);
@@ -416,19 +453,25 @@ void LcdDbg (String dbgmsg) // not used (for debug purposes, as Serial is used a
 
 
 void connectWiFi()
-{ cmdBuf[0] = {0};
+{ wdt_reset();
+  cmdBuf[0] = {0};
+  cmd2Buf[0] = {0};
   Serial.readString();
   delayFnct();
+  wdt_reset();
   Serial.println(F("AT+CWMODE=1"));
   Serial.readString();
   delayFnct();
+  wdt_reset();
   strcat(cmdBuf, "AT+CWJAP=\"");
   strcat(cmdBuf, SSID);
   strcat(cmdBuf, "\",\"");
   strcat(cmdBuf, PASS);
   strcat(cmdBuf, "\"");
   Serial.println(cmdBuf);
+  wdt_reset();
   delay(4000);                    // Give time to connect to the WiFi
+  wdt_reset();
   cmdBuf[0] = {0};
 
   if(Serial.find("OK"))       
@@ -439,21 +482,27 @@ void connectWiFi()
   { //Serial.println(F("EWiFi"));   //WiFi ERROR
     ConnOK = false;
   }
+  wdt_reset();
   Serial.readString();
   delayFnct();
-}
+  wdt_reset();
+  }
 
 
 void  update_WiFi ()
-{ cmdBuf[0] = {0};                           // 1) Update the values on thingspeak with measured data
+{ wdt_reset();
+  cmdBuf[0] = {0};                           // 1) Update the values on thingspeak with measured data
   strcat(cmdBuf, "AT+CIPSTART=\"TCP\",\"");  // api.thingspeak.com
   strcat(cmdBuf, DST_IP);                   
   strcat(cmdBuf, "\",80");
   Serial.println(cmdBuf);
+  wdt_reset();
   ///delayFnct();
   if (Serial.find("OK")) 
     { delayFnct();  }
+  wdt_reset();
   Serial.readString();                      // Prepare GET string
+  wdt_reset();
   cmdBuf[0] = {0};
   cmd2Buf[0] = {0};
   strcat(cmdBuf, myWriteAPIKeyWB);
@@ -483,14 +532,19 @@ void  update_WiFi ()
   strcat(cmd2Buf, dtostrf( strlen(cmdBuf)+20 , 0, 0, buf));  //add 20 for the first GET part. (Separated to shorten buffer and save RAM)
   Serial.println(cmd2Buf);
   ///delayFnct();
+  wdt_reset();
   if (Serial.find(">"))
-    {   Serial.print(F("GET /update?api_key="));
+    {   wdt_reset();
+        Serial.print(F("GET /update?api_key="));
         Serial.print(cmdBuf);  }
   else
     { //Serial.print(cmdBuf);
+      wdt_reset();
       Serial.println(F("AT+CIPCLOSE")); }
   Serial.readString();
   delayFnct();
+  wdt_reset();
+  
 
 
   cmdBuf[0] = {0};                          // 2) Start AT communication with Thingspeak to read channel description (contains controls values to be updated remotely)
@@ -498,14 +552,18 @@ void  update_WiFi ()
   strcat(cmdBuf, DST_IP);                   
   strcat(cmdBuf, "\",80");
   Serial.println(cmdBuf);
+  wdt_reset();
   ///delayFnct();
   if (Serial.find("OK")) 
     { delayFnct();  }
+  wdt_reset();
   Serial.readString();               
   Serial.println(F("AT+CIPSEND=49"));      // Prepare GET string
+  wdt_reset();
   ///delayFnct();  
   if (Serial.find(">"))
-  { Serial.print(F("GET /channels/91010.json                     \r\n\r\n")); 
+  { wdt_reset();
+    Serial.print(F("GET /channels/91010.json                     \r\n\r\n")); 
     //Serial.print(F("GET /channels/91010.json?key="));   // these 3 lines instead of the above if you want to keep the channel private
     //Serial.print(myReadAPIKeyWB);
     //Serial.print(F("\r\n\r\n")); 
@@ -513,8 +571,10 @@ void  update_WiFi ()
     cmdBuf[0] = {0};
     cmd2Buf[0] = {0};
     Serial.readBytesUntil(';', cmdBuf, 124);//read quickly 'till first variable (avoids overflow)
+    wdt_reset();
     cmdBuf[0] = {0};
     i = Serial.readBytesUntil(';', cmdBuf, 124); //read quickly all variables (avoids overflow)
+    wdt_reset();
     ///cmdBuf[i] = {0};
     //Serial.print(F("PARAMS:"));
     //Serial.println(cmdBuf);
@@ -528,16 +588,16 @@ void  update_WiFi ()
         j = 0;
         switch (k)
         { case 1:                    /// ATTENTION: NO CHECK THAT VALUES ARE ACCEPTABLE, ENTER CORRECT VALUES IN THINGSPEAK DESCRIPTION!!!!
-            Day = atol(cmd2Buf);
+            Day = atof(cmd2Buf);
             break;
           case 3:
-            BO = atol(cmd2Buf);
+            BO = atof(cmd2Buf);
             break;
           case 5:
-            Ht1 = atol(cmd2Buf);
+            Ht1 = atof(cmd2Buf);
             break;
           case 7:
-            Ht0 = atol(cmd2Buf);
+            Ht0 = atof(cmd2Buf);
             break;
           case 9:
             OHt1 = atoi(cmd2Buf);
@@ -581,32 +641,51 @@ void  update_WiFi ()
     }           // for loop on string length
   }             // if loop on communication from WiFi 
   else
-  { Serial.println(F("AT+CIPCLOSE")); } //Serial.println("DESCRIPTION NOT FOUND");
+  { wdt_reset();
+    Serial.println(F("AT+CIPCLOSE")); } //Serial.println("DESCRIPTION NOT FOUND");
+  wdt_reset();
   Serial.readString();      // close all communication queues
   delayFnct();
-
-//    Serial.println(Day);
-//    Serial.println(BO);
-//    Serial.print(F("Ht1:"));
-//    Serial.println(Ht1);
-//    Serial.print(F("Ht0:"));
-//    Serial.println(Ht0);
-//    Serial.println(OHt1);
-//    Serial.println(OHt0);
-//    Serial.println(H2O1);
-//    Serial.println(H2O0);
-//    Serial.println(RH1);
-//    Serial.println(RH0);
-//    Serial.println(ORH1);
-//    Serial.println(ORH0);
-//    Serial.println(ORHT);
-//    Serial.println(ODew);
+  wdt_reset();
+  
+  //Serial.print((float)Day);
+  //Serial.print(F("\t"));
+  //Serial.print((float)BO);
+  //Serial.print(F("\t"));
+  //Serial.print(F("Ht1:"));
+  //Serial.print((float)Ht1);
+  //Serial.print(F("\t"));
+  //Serial.print(F("Ht0:"));
+  //Serial.print((float)Ht0);
+  //Serial.print(F("\t"));
+  //Serial.print((int)OHt1);
+  //Serial.print(F("\t"));
+  //Serial.print((int)OHt0);
+  //Serial.print(F("\t"));
+  //Serial.print((int)H2O1);
+  //Serial.print(F("\t"));
+  //Serial.print((int)H2O0);
+  //Serial.print(F("\t"));
+  //Serial.print((int)H2OT);
+  //Serial.print(F("\t"));
+  //Serial.print((int)RH1);
+  //Serial.print(F("\t"));
+  //Serial.print((int)RH0);
+  //Serial.print(F("\t"));
+  //Serial.print((int)ORH1);
+  //Serial.print(F("\t"));
+  //Serial.print((int)ORH0);
+  //Serial.print(F("\t"));
+  //Serial.print(ORHT);
+  //Serial.print(F("\t"));
+  //Serial.println((int)ODew);
 
   cmdBuf[0] = {0};                          // 3) Finish by getting the date from server
   ///cmd2Buf[0] = {0};                         // will save here the date string
   strcat(cmdBuf, "AT+CIPSTART=\"TCP\",\"");  // api.thingspeak.com
   strcat(cmdBuf, DST_IP);                   
   strcat(cmdBuf, "\",80");
+  wdt_reset();
   Serial.println(cmdBuf);
   //delayFnct();
   //if (Serial.find("OK")) {
@@ -614,6 +693,7 @@ void  update_WiFi ()
   //}
   Serial.readString();
   delayFnct();
+  wdt_reset();
   // Send GET string
   Serial.println(F("AT+CIPSEND=12"));
   //delayFnct();  
@@ -621,51 +701,61 @@ void  update_WiFi ()
   { Serial.print(F("GET date\r\n\r\n"));
     ///delayFnct();
   }
+  wdt_reset();
+  cmdBuf[0] = {0};                          
   cmd2Buf[0] = {0};                         // will save here the date string
   if (Serial.find("Date: "))                // get the date line from the http header (sends a fake/wrong GET request)
-  { //delayFnct();
-    if (Serial.available() > 0) 
-      { Serial.readBytes(cmd2Buf, 29);   }  // read the incoming byte(s)
+  { wdt_reset();
+    //delayFnct();
+  //  if (Serial.available() > 0) 
+  //    { 
+        wdt_reset();
+        Serial.readBytes(cmd2Buf, 29);//   }  // read the incoming byte(s)
   }
   //cmd2Buf[29] = {0};                      // will save here the date string
+  wdt_reset();
   Serial.readString();
   delayFnct();
+  wdt_reset();
   Serial.print(F("DATE:"));
   Serial.println(cmd2Buf);
   Serial.readString();
   delayFnct();
-}
+  wdt_reset();
+  }
 
 
 void update_Serial()           // Not use for interference with WiFi module.
-{ Serial.print(F("Ti:"));
+{ wdt_reset();
+  Serial.print(F("Ti:"));
   Serial.print(Ti);            //eventually dtostrf(Ti,2,2,temp); dtostrf(value, width_before_comma, precision, output);
   Serial.print(F("\tRHi:"));
-  Serial.print(RHi);
+  Serial.print((int)RHi);
   Serial.print(F("\tTo:"));
   Serial.print(To);
   Serial.print(F("\tRHo:"));
-  Serial.print(RHo);
+  Serial.print((int)RHo);
   Serial.print(F("\tPress:"));
   Serial.print(pressure);
   //Serial.print(F("\tp0:"));  //if p0 enabled you may want to log the equivalent pressure the at-sea-level
   //Serial.print(p0);
   Serial.print(F("\tRain:"));
-  Serial.print(rain);
+  Serial.print((int)rain);
   Serial.print(F("\tSoilH:"));
-  Serial.print(soil);
+  Serial.print((int)soil);
   Serial.print(F("\tDew:"));
-  Serial.print(dew);
+  Serial.print((int)dew);
   Serial.print(F("\tDay:"));
-  Serial.print(sun);
+  Serial.print((int)sun);
   Serial.print(F("\tCtrlByte:"));
-  Serial.print(CtrlByte);
+  Serial.print((int)CtrlByte);
   Serial.print(F("\tT:"));
   Serial.print(millis()/1000);
   Serial.print(F("\tDate:"));
   Serial.println(cmd2Buf);
   Serial.readString(); //clean the buffer and the communication
   delayFnct();
+  wdt_reset();
 }
 
 void delayFnct()  //just to save memory
