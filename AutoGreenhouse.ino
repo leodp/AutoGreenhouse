@@ -45,17 +45,11 @@ File myFile;
 
 
 // ESP8266 - WiFi card
-//#define SSID "your_ssid"                                      // edit with your wifi ssid here
-//#define PASS "your_pwd"                                       // edit with your wifi key here
-//#define myWriteAPIKeyWB  "yourChWriteKey"                     // edit with your thingspeak channel info
-//#define myReadAPIKeyWB   "yourChReadKey"                      // edit with your thingspeak channel info  IF I DEFINE A READ KEY I CAN KEEP THE CHANNEL PRIVATE
-//#define myChannelID      "yourThingspeak_chID"                // edit with your thingspeak channel info
-
-#define SSID "ldp"                                              // edit with your wifi ssid here
-#define PASS "123qwe123"                                        // edit with your wifi key here
-#define myWriteAPIKeyWB "LWDLPODZ0DOK1RP5"                      // edit with your thingspeak channel info
-#define myReadAPIKeyWB  "GCC75CD4VAR28V7R"                    // edit with your thingspeak channel info  IF I DEFINE A READ KEY I CAN KEEP THE CHANNEL PRIVATE. ATTENTION: LOW MEMORY AVAILABLE MAY LEAD TO FRAGMENTATION
-#define myChannelID      "91010"                                // edit with your thingspeak channel info
+#define SSID "your_ssid"                                      // edit with your wifi ssid here
+#define PASS "your_pwd"                                       // edit with your wifi key here
+#define myWriteAPIKeyWB  "yourChWriteKey"                     // edit with your thingspeak channel info
+#define myReadAPIKeyWB   "yourChReadKey"                      // edit with your thingspeak channel info  IF I DEFINE A READ KEY I CAN KEEP THE CHANNEL PRIVATE
+#define myChannelID      "yourThingspeak_chID"                // edit with your thingspeak channel info
 
 #define DST_IP "184.106.153.149"                                // Thingspeak API IP address
 #define IPWiFiCARD "192"                                        // if it is  connected, IP=192.168... (you may need to edit here, check your AP settings)
@@ -123,14 +117,14 @@ unsigned char H2OT = 30;         // Auto watering switch-on time. Set to 0 to sw
 char RH1 = 15;                   // Too low Temp: start heating. Need float precision on temp warning close to 0°C
 char RH0 = 35;                   // Safe Temp, stop heating
 
-char ORH1    = 60;               // Max humidity allowed: take precautions to reduce humidity (open windows, ventilate with external air)
-char ORH0   = 55;                // Safe humidity level (reduced molds/mildew risk): switch off ventilation.
+char ORH1    = 90;               // Max humidity allowed: take precautions to reduce humidity (open windows, ventilate with external air)
+char ORH0   = 75;                // Safe humidity level (reduced molds/mildew risk): switch off ventilation.
 char ORHT  = 5;                  // If temperature falls below this value then stop ventilation to avoid undercooling, even if RH is high
 char ODew = 94;                  // If the dew sensor is indicating condensation, you may want to start ventilation. Increase above 100 to disable
 #define lowRHPWM   128           // PWM controls for the motors. Set to 255 for always on/always off
 
 // Next line to be entered in Thingspeak channel description
-// ;11.5 3.8 6 10 20 15 15 25 30 58 65 80 70 5 85 ;LenDay LenBO Ht1 Ht0 OHt1 OHt0 H2O1 H2O0 H2OT RH1 RH0 ORH1 ORH0 ORHT ODew
+// ;11.5 6 0.3 4 38 27 15 30 30 15 35 90 75 5 94;LenDay LenBO Ht1 Ht0 OHt1 OHt0 H2O1 H2O0 H2OT RH1 RH0 ORH1 ORH0 ORHT ODew
 
 //  SETUP  /////////////////////////////////////////////////////////////////////////////////////////////////////////
 void setup()
@@ -215,7 +209,7 @@ void loop()
 
   wdt_reset();
   #ifdef WIFI
-  if (h==2)  //Execute WiFi & SDCARD logging only once every n loop (but LCD & Serial get updated more often)
+  if (h==5)  //Execute WiFi & SDCARD logging only once every n loop (but LCD & Serial get updated more often)
    {
     //  if necessary reconnect to the wifi  (connection may be lost due to a weak or temporary WiFi signal)
     Serial.println(F("AT+CIFSR"));        // does not always work as expected (detect connection), but helps to reconnect if necessary
@@ -317,7 +311,7 @@ void loop()
   if ( (unsigned long)(millis() - timeDiffMeas) > (unsigned long)((float)((BO + Day)*60*60*1000)) && dayStateMachine == 2) // After a while open again the blackout tent, for easing ventilation (it should be already night outside). BE SURE THAT IT'S DARK WHEN YOU REOPEN!!
   { CtrlByte &= B11011111;
     digitalWrite(relay_BOut, (CtrlByte>>5)&1);
-    dayStateMachine = 3;
+    dayStateMachine = 0;
     dayflag = 0;
   }
 
@@ -394,7 +388,7 @@ void loop()
   //Serial.println(F("UPDATING"));
   wdt_reset();
 
-  if (h==2)  //Execute WiFi & SDCARD logging only once every n loop (but LCD & Serial get updated more often)
+  if (h==5)  //Execute WiFi & SDCARD logging only once every n loop (but LCD & Serial get updated more often)
     {
     h=0;  
     #ifdef WIFI
@@ -548,6 +542,7 @@ void  update_WiFi ()
     {   wdt_reset();
         Serial.print(F("GET /update?api_key="));
         Serial.print(myWriteAPIKeyWB);
+        i -=strlen(myWriteAPIKeyWB);
         Serial.print(F("&field1="));
         Serial.print(dtostrf( Ti , 0, 2, buf));
         i -=strlen(dtostrf( Ti , 0, 2, buf));
@@ -593,7 +588,7 @@ void  update_WiFi ()
   Serial.print(DST_IP);                      // api.thingspeak.com
   Serial.println(F("\",80"));
   wdt_reset();
-  ///delayFnct();
+  //delayFnct();
   if (Serial.find("OK")) 
     { delayFnct();  }
   wdt_reset();
@@ -603,7 +598,7 @@ void  update_WiFi ()
   wdt_reset();
   delayFnct();  
   if (Serial.find(">"))
-  { //wdt_reset();
+  { wdt_reset();
     Serial.print(F("GET /channels/91010.json\r\n\r\n")); 
     //Serial.print(F("GET /channels/91010.json?key="));   // these 3 lines instead of the above if you want to keep the channel private
     //Serial.print(myReadAPIKeyWB);
@@ -612,8 +607,8 @@ void  update_WiFi ()
   }
   
   wdt_reset();
-  //delayFnct();
-  if (Serial.find("__"))//(Serial.find("tion\":\";"))
+  delayFnct();
+  if (Serial.find(";"))//(Serial.find("tion\":\";"))
   {wdt_reset();
       Serial.readBytes(cmdBuf, 53);//   }  // read the incoming bytes
       for (i=0;i++;i<53)
@@ -625,8 +620,8 @@ void  update_WiFi ()
       ///cmdBuf[i] = {0};
       //Serial.print(F("I:"));
       //Serial.println(i);
-      Serial.print(F("PARAMS:"));
-      Serial.println(cmdBuf);
+      //Serial.print(F("PARAMS:"));
+      //Serial.println(cmdBuf);
       j = 0;
       k = -1;
       for (i = 0; i <= strlen(cmdBuf); i++)
@@ -682,21 +677,21 @@ void  update_WiFi ()
   delayFnct();
   wdt_reset();
   
-  Serial.print(F("\t"));Serial.print(F("Day:"));Serial.print((float)Day);
-  Serial.print(F("\t"));Serial.print(F( "BO:"));Serial.print((float)BO);
-  Serial.print(F("\t"));Serial.print(F("Ht1:"));Serial.print((float)Ht1);
-  Serial.print(F("\t"));Serial.print(F("Ht0:"));Serial.print((float)Ht0);
-  Serial.print(F("\t"));Serial.print((int)OHt1);
-  Serial.print(F("\t"));Serial.print((int)OHt0);
-  Serial.print(F("\t"));Serial.print((int)H2O1);
-  Serial.print(F("\t"));Serial.print((int)H2O0);
-  Serial.print(F("\t"));Serial.print((int)H2OT);
-  Serial.print(F("\t"));Serial.print((int)RH1);
-  Serial.print(F("\t"));Serial.print((int)RH0);
-  Serial.print(F("\t"));Serial.print((int)ORH1);
-  Serial.print(F("\t"));Serial.print((int)ORH0);
-  Serial.print(F("\t"));Serial.print((int)ORHT);
-  Serial.print(F("\t"));Serial.println((int)ODew);
+  //Serial.print(F("\t"));Serial.print(F("Day:"));Serial.print((float)Day);
+  //Serial.print(F("\t"));Serial.print(F( "BO:"));Serial.print((float)BO);
+  //Serial.print(F("\t"));Serial.print(F("Ht1:"));Serial.print((float)Ht1);
+  //Serial.print(F("\t"));Serial.print(F("Ht0:"));Serial.print((float)Ht0);
+  //Serial.print(F("\t"));Serial.print((int)OHt1);
+  //Serial.print(F("\t"));Serial.print((int)OHt0);
+  //Serial.print(F("\t"));Serial.print((int)H2O1);
+  //Serial.print(F("\t"));Serial.print((int)H2O0);
+  //Serial.print(F("\t"));Serial.print((int)H2OT);
+  //Serial.print(F("\t"));Serial.print((int)RH1);
+  //Serial.print(F("\t"));Serial.print((int)RH0);
+  //Serial.print(F("\t"));Serial.print((int)ORH1);
+  //Serial.print(F("\t"));Serial.print((int)ORH0);
+  //Serial.print(F("\t"));Serial.print((int)ORHT);
+  Serial.print(F("ODEW:"));Serial.print(F("\t"));Serial.println((int)ODew);
   wdt_reset();
   Serial.readString();      // close all communication queues
   delayFnct();
